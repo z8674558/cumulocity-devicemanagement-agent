@@ -1,0 +1,47 @@
+name: Upload Debian Package
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build Debian package
+      run: |
+        docker build -t dm-image -f docker/Dockerfile .
+        docker run -it dm-image /bin/bash
+        yes | apt install python3-stdeb
+        python3 setup.py --command-packages=stdeb.command bdist_deb
+        exit
+    - name: Copy the package to host
+      run: |    
+        containerid=$(docker ps -a | grep dm-image | awk '{print $1}')
+        docker cp "${containerid}":/deb_dist .
+    - name: Create a release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: ${{ github.ref }}
+        body: ''
+        draft: false
+        prerelease: false
+    - name: Get name of the package
+      run: |
+        echo "pathname=$(ls deb_dist/*.deb | head -n 1)" >> $GITHUB_ENV
+        echo "filename=$(basename $ARTIFACT_PATHNAME)" >> $GITHUB_ENV
+    - name: Upload the package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.pathname }}
+        asset_name: ${{ env.filename }}
+        asset_content_type: application/vnd.debian.binary-package
